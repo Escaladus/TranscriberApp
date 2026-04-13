@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Suomi-transkriptio videosta</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 16px; line-height: 1.5; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .dropzone {
+      border: 2px dashed #888; border-radius: 12px; padding: 28px; text-align: center; cursor: pointer;
+      background: #fafafa;
+    }
+    .dropzone.dragover { background: #eef6ff; border-color: #2a7fff; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+    .field { flex: 1; min-width: 180px; }
+    label { display: block; font-weight: bold; margin-bottom: 6px; }
+    input, select, button, textarea {
+      width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #ccc;
+    }
+    button { cursor: pointer; font-weight: bold; }
+    textarea { min-height: 280px; }
+    .muted { color: #666; font-size: 14px; }
+    .hidden { display: none; }
+    .success { color: #146c2e; }
+    .error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <h1>Videon transkriptio suomeksi</h1>
+  <p class="muted">Pudota video tähän, valitse asetukset ja ohjelma muuntaa äänen tekstiksi. Pitkätkin videot toimivat, kun koneella on tarpeeksi levytilaa ja aikaa käsittelyyn.</p>
+
+  <div class="card">
+    <div id="dropzone" class="dropzone">
+      <strong>Pudota video tähän</strong><br>
+      tai klikkaa ja valitse tiedosto
+      <input id="fileInput" type="file" accept="video/*,audio/*" class="hidden" />
+    </div>
+    <div id="selectedFile" style="margin-top: 12px;"></div>
+
+    <div class="row">
+      <div class="field">
+        <label for="format">Tallennusmuoto</label>
+        <select id="format">
+          <option value="txt">TXT</option>
+          <option value="srt">SRT (tekstitys)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="model">Whisper-malli</label>
+        <select id="model">
+          <option value="small">small (kevyempi)</option>
+          <option value="medium" selected>medium (suositus)</option>
+          <option value="large-v3">large-v3 (tarkin, raskas)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="device">Laite</label>
+        <select id="device">
+          <option value="cpu" selected>CPU</option>
+          <option value="cuda">GPU (CUDA)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <button id="pickFolderBtn" type="button">Valitse tallennuskansio</button>
+        <div id="folderInfo" class="muted" style="margin-top: 8px;">Ei valittua kansiota. Selain lataa tiedoston tavallisesti, jos kansiovalinta ei ole tuettu.</div>
+      </div>
+      <div class="field" style="align-self: end;">
+        <button id="startBtn" type="button">Aloita transkriptio</button>
+      </div>
+    </div>
+
+    <p id="status" class="muted"></p>
+  </div>
+
+  <div class="card">
+    <h2>Esikatselu</h2>
+    <textarea id="preview" readonly></textarea>
+    <div class="row">
+      <div class="field"><button id="downloadBtn" type="button" disabled>Lataa tiedosto</button></div>
+      <div class="field"><button id="saveToFolderBtn" type="button" disabled>Tallenna valittuun kansioon</button></div>
+    </div>
+    <p class="muted">Huom: kansion valinta toimii yleensä Chromium-pohjaisissa selaimissa (esim. Chrome, Edge).</p>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const selectedFile = document.getElementById('selectedFile');
+    const startBtn = document.getElementById('startBtn');
+    const statusEl = document.getElementById('status');
+    const preview = document.getElementById('preview');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const saveToFolderBtn = document.getElementById('saveToFolderBtn');
+    const pickFolderBtn = document.getElementById('pickFolderBtn');
+    const folderInfo = document.getElementById('folderInfo');
+
+    let selected = null;
+    let lastResult = null;
+    let chosenDirHandle = null;
+
+    function showStatus(message, type = 'muted') {
+      statusEl.className = type;
+      statusEl.textContent = message;
+    }
+
+    function setFile(file) {
+      selected = file;
+      selectedFile.innerHTML = file
+        ? `<strong>Valittu tiedosto:</strong> ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`
+        : '';
+    }
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => setFile(e.target.files[0]));
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropzone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropzone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+      });
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      const file = e.dataTransfer.files[0];
+      if (file) setFile(file);
+    });
+
+    pickFolderBtn.addEventListener('click', async () => {
+      if (!window.showDirectoryPicker) {
+        folderInfo.textContent = 'Tämä selain ei tue kansion valintaa. Voit silti ladata tiedoston normaalisti.';
+        return;
+      }
+      try {
+        chosenDirHandle = await window.showDirectoryPicker();
+        folderInfo.textContent = `Valittu kansio: ${chosenDirHandle.name}`;
+      } catch (err) {
+        folderInfo.textContent = 'Kansion valinta peruttiin.';
+      }
+    });
+
+    startBtn.addEventListener('click', async () => {
+      if (!selected) {
+        showStatus('Valitse ensin video- tai äänitiedosto.', 'error');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', selected);
+      formData.append('output_format', document.getElementById('format').value);
+      formData.append('model_name', document.getElementById('model').value);
+      formData.append('device', document.getElementById('device').value);
+
+      showStatus('Transkriptio käynnissä... Tämä voi kestää pitkään isolla videolla.', 'muted');
+      preview.value = '';
+      downloadBtn.disabled = true;
+      saveToFolderBtn.disabled = true;
+
+      try {
+        const response = await fetch('/transcribe', { method: 'POST', body: formData });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Tuntematon virhe');
+
+        lastResult = data;
+        preview.value = data.preview || '';
+        downloadBtn.disabled = false;
+        saveToFolderBtn.disabled = !chosenDirHandle;
+        showStatus(
+          `Valmis. Kieli: ${data.language}, kesto: ${Math.round(data.duration)} s, segmenttejä: ${data.segment_count}`,
+          'success'
+        );
+      } catch (err) {
+        showStatus(`Virhe: ${err.message}`, 'error');
+      }
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      if (!lastResult) return;
+      window.location.href = lastResult.download_url;
+    });
+
+    saveToFolderBtn.addEventListener('click', async () => {
+      if (!lastResult || !chosenDirHandle) return;
+      try {
+        const resp = await fetch(lastResult.download_url);
+        const text = await resp.text();
+        const fileHandle = await chosenDirHandle.getFileHandle(lastResult.filename, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(text);
+        await writable.close();
+        showStatus(`Tallennettu kansioon: ${chosenDirHandle.name}/${lastResult.filename}`, 'success');
+      } catch (err) {
+        showStatus(`Tallennus epäonnistui: ${err.message}`, 'error');
+      }
+    });
+  </script>
+</body>
+</html>
