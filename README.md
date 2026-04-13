@@ -1,25 +1,27 @@
 # Finnish Video Transcriber
 
-Tämä sovellus muuntaa videon tai äänitiedoston tekstiksi suomeksi käyttäen `faster-whisper`-kirjastoa.
+Tama sovellus muuntaa videon tai aanitiedoston tekstiksi suomeksi kayttaen `faster-whisper`-kirjastoa.
 
 ## Ominaisuudet
-- Tukee pitkiä tiedostoja, myös noin 1.5 h videoita
-- Drag & drop -käyttöliittymä selaimessa
+- CPU-only kasittely yksinkertaisemmalla asetuksella
+- Selainpohjainen kayttoliittyma drag & drop -tuella
 - Suomen kieli (`language="fi"`)
 - TXT- tai SRT-ulostulo
-- Mahdollisuus ladata valmis tiedosto tai tallentaa se valittuun kansioon selaimen kautta
+- Tallennus valittuun kansioon selaimen kautta, jos selain tukee sita
+- Selkea ilmoitus, kun kasittely on valmis
 
 ## Vaatimukset
 - Python 3.10+
 - `ffmpeg` asennettuna ja PATH:ssa
-- Riittävästi levytilaa pitkän videon väliaikaisille tiedostoille
+- Riittavasti levytilaa valiaikaisille tiedostoille
+- Whisper-malli saatavilla joko verkosta tai paikallisessa kansiossa `models/<malli>`
 
 ## Asennus
 
 ### Windows
 1. Asenna Python.
-2. Asenna ffmpeg ja varmista, että `ffmpeg.exe` löytyy PATH:sta.
-3. Luo ja aktivoi virtuaaliympäristö:
+2. Asenna ffmpeg ja varmista, etta `ffmpeg.exe` loytyy PATH:sta.
+3. Luo ja aktivoi virtuaaliymparisto:
    ```bash
    python -m venv .venv
    .venv\Scripts\activate
@@ -28,23 +30,37 @@ Tämä sovellus muuntaa videon tai äänitiedoston tekstiksi suomeksi käyttäen
    ```bash
    pip install -r requirements.txt
    ```
-5. Käynnistä:
+5. Halutessasi lisaa paikallinen Whisper-malli esimerkiksi kansioon:
+   ```text
+   models\medium
+   ```
+6. Kaynnista:
    ```bash
    uvicorn app:app --reload
    ```
-6. Avaa selaimessa:
-   ```
+7. Avaa selaimessa:
+   ```text
    http://127.0.0.1:8000
    ```
 
-## Huomioita 1.5 tunnin videoista
-- CPU:lla käsittely voi kestää pitkään.
-- `medium` on hyvä oletus. `large-v3` antaa usein paremman laadun, mutta on raskaampi.
-- CUDA-GPU nopeuttaa paljon, jos käytettävissä.
-- Sovellus irrottaa ensin äänen WAV-muotoon, joten väliaikaisesti tarvitaan lisää levytilaa.
+Vaihtoehtoisesti voit kaynnistaa projektin ja avata selaimen automaattisesti:
+```powershell
+.\run.ps1
+```
 
-## Mahdollisia jatkoparannuksia
-- Taustajono pitkille töille
-- Reaaliaikainen progress bar
-- ZIP-paketti, jos halutaan sekä TXT että SRT samalla kertaa
-- Puhujien erottelu (speaker diarization)
+## Mallit
+- `small`: kevyin ja nopein
+- `medium`: suositeltu tasapaino laadun ja nopeuden valilla
+- `large-v3`: tarkin, mutta raskain CPU:lla
+
+Jos paikallinen malli loytyy polusta `models/<malli>`, sovellus kayttaa sita. Muuten `faster-whisper` yrittaa ladata mallin normaalisti.
+
+## Tallennus
+- Jos selain tukee File System Access API:a, valmis tiedosto voidaan tallentaa valittuun kansioon.
+- Muuten tiedosto ladataan selaimen tavalliseen latauskansioon.
+- Selain ei aina paljasta tarkkaa absoluuttista levyosoitetta turvallisuussyista.
+
+## Huomioita pitkiin videoihin
+- CPU:lla kasittely voi kestaa pitkaan.
+- `medium` on hyva oletus useimpiin tilanteisiin.
+- Sovellus irrottaa ensin aanen WAV-muotoon, joten valiaikaisesti tarvitaan lisaa levytilaa.
