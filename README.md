@@ -3,7 +3,7 @@
 Tama sovellus muuntaa videon tai aanitiedoston tekstiksi suomeksi kayttaen `faster-whisper`-kirjastoa.
 
 ## Ominaisuudet
-- CPU-only kasittely yksinkertaisemmalla asetuksella
+- Auto-, CPU- ja GPU-kasittely yhdella valinnalla
 - Selainpohjainen kayttoliittyma drag & drop -tuella
 - Suomen kieli (`language="fi"`)
 - TXT- tai SRT-ulostulo
@@ -15,6 +15,7 @@ Tama sovellus muuntaa videon tai aanitiedoston tekstiksi suomeksi kayttaen `fast
 - `ffmpeg` asennettuna ja PATH:ssa
 - Riittavasti levytilaa valiaikaisille tiedostoille
 - Whisper-malli saatavilla joko verkosta tai paikallisessa kansiossa `models/<malli>`
+- GPU-tilaa varten NVIDIA GPU ja toimiva CUDA-ymparisto
 
 ## Asennus
 
@@ -55,6 +56,14 @@ Vaihtoehtoisesti voit kaynnistaa projektin ja avata selaimen automaattisesti:
 
 Jos paikallinen malli loytyy polusta `models/<malli>`, sovellus kayttaa sita. Muuten `faster-whisper` yrittaa ladata mallin normaalisti.
 
+## Ajotilat
+- `Auto`: kayttaa GPU:ta, jos CUDA on saatavilla. Muuten kayttaa CPU:ta.
+- `CPU`: pakottaa ajon prosessorille (`int8`)
+- `GPU`: pakottaa ajon GPU:lle (`CUDA float16`)
+
+Nykyinen `faster-whisper`-malli voidaan kaynnistaa GPU:lla ilman erillista muunnosta, kun CUDA on saatavilla.
+`ffmpeg` tarvitaan edelleen aanen irrottamiseen videosta, mutta se ei vaikuta Whisperin GPU-kiihdytykseen.
+
 ## Tallennus
 - Jos selain tukee File System Access API:a, valmis tiedosto voidaan tallentaa valittuun kansioon.
 - Muuten tiedosto ladataan selaimen tavalliseen latauskansioon.
@@ -62,5 +71,6 @@ Jos paikallinen malli loytyy polusta `models/<malli>`, sovellus kayttaa sita. Mu
 
 ## Huomioita pitkiin videoihin
 - CPU:lla kasittely voi kestaa pitkaan.
+- GPU voi nopeuttaa kasittelya merkittavasti, jos CUDA on kaytettavissa.
 - `medium` on hyva oletus useimpiin tilanteisiin.
 - Sovellus irrottaa ensin aanen WAV-muotoon, joten valiaikaisesti tarvitaan lisaa levytilaa.

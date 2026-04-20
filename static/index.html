@@ -139,7 +139,7 @@
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 14px;
       margin-top: 18px;
     }
@@ -312,13 +312,14 @@
         <h1>Transkriptio valmiiksi ilman ylimaaraisia asetuksia.</h1>
         <p>
           Pudota video tai aanitiedosto, valitse malli ja anna sovelluksen muuntaa puhe suomenkieliseksi tekstiksi.
-          Kasittely tehdaan prosessorilla, ja lopuksi saat selkean ilmoituksen siita, etta tiedosto on valmis ja minne se tallentui.
+          Voit ajaa kasittelyn automaattisesti, prosessorilla tai GPU:lla. Lopuksi saat selkean ilmoituksen siita,
+          etta tiedosto on valmis ja minne se tallentui.
         </p>
       </div>
       <div class="hero-stats">
         <div class="mini-card">
           <strong>Yksinkertainen kaytto</strong>
-          <p>Ei GPU-valintaa, ei ylimaaraisia teknisia asetuksia. Valitse tiedosto, malli ja formaatti.</p>
+          <p>Valitse tiedosto, malli, formaatti ja ajotila. Auto kayttaa GPU:ta, jos CUDA on saatavilla.</p>
         </div>
         <div class="mini-card">
           <strong>Tallennus hallinnassa</strong>
@@ -354,7 +355,19 @@
               <option value="large-v3">large-v3</option>
             </select>
           </div>
+          <div>
+            <label for="runtimeMode">Ajotila</label>
+            <select id="runtimeMode">
+              <option value="auto" selected>Auto</option>
+              <option value="cpu">CPU</option>
+              <option value="gpu">GPU (CUDA)</option>
+            </select>
+          </div>
         </div>
+
+        <p id="runtimeInfo" class="note">
+          Auto yrittaa kayttaa GPU:ta, jos CUDA on saatavilla. Muuten kasittely tehdaan CPU:lla.
+        </p>
 
         <div class="actions actions-wide">
           <button id="pickFolderBtn" type="button" class="button-secondary">Valitse tallennuskansio</button>
@@ -367,7 +380,7 @@
         </div>
 
         <div id="status" class="status-banner status-muted">
-          Valmis aloittamaan. Pitkien tiedostojen kasittely voi kestaa jonkin aikaa CPU:lla.
+          Valmis aloittamaan. Auto valitsee GPU:n, jos se on saatavilla.
         </div>
 
         <div id="resultCard" class="result-card hidden">
@@ -399,6 +412,8 @@
     const selectedFile = document.getElementById('selectedFile');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
+    const runtimeModeSelect = document.getElementById('runtimeMode');
+    const runtimeInfo = document.getElementById('runtimeInfo');
     const statusEl = document.getElementById('status');
     const preview = document.getElementById('preview');
     const downloadBtn = document.getElementById('downloadBtn');
@@ -414,6 +429,7 @@
     let chosenDirHandle = null;
     let currentJobId = null;
     let pollTimer = null;
+    let capabilities = null;
     const defaultTitle = document.title;
 
     function setDocumentState(label) {
@@ -450,7 +466,8 @@
     }
 
     function buildSummary(data) {
-      return `Kieli: ${data.language}, kesto: ${Math.round(data.duration)} s, segmentteja: ${data.segment_count}.`;
+      const runtimePart = data.runtime_label ? `Ajo: ${data.runtime_label}, ` : '';
+      return `${runtimePart}kieli: ${data.language}, kesto: ${Math.round(data.duration)} s, segmentteja: ${data.segment_count}.`;
     }
 
     function resetPolling() {
@@ -465,8 +482,53 @@
       stopBtn.disabled = !isBusy;
       pickFolderBtn.disabled = isBusy;
       fileInput.disabled = isBusy;
+      runtimeModeSelect.disabled = isBusy;
       downloadBtn.disabled = isBusy || !lastResult;
       saveToFolderBtn.disabled = isBusy || !lastResult || !chosenDirHandle;
+    }
+
+    function applyCapabilities(data) {
+      capabilities = data;
+      const gpuOption = runtimeModeSelect.querySelector('option[value="gpu"]');
+
+      if (data.cuda_available) {
+        gpuOption.disabled = false;
+        runtimeInfo.textContent = `CUDA havaittu (${data.cuda_device_count} laite/tta). Auto voi kayttaa GPU:ta.`;
+        return;
+      }
+
+      if (runtimeModeSelect.value === 'gpu') {
+        runtimeModeSelect.value = data.default_runtime_mode || 'auto';
+      }
+      gpuOption.disabled = true;
+      runtimeInfo.textContent = 'CUDA-GPU:ta ei havaittu. Auto kayttaa CPU:ta.';
+    }
+
+    async function loadCapabilities() {
+      try {
+        const response = await fetch('/capabilities');
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || 'Capabilities fetch failed.');
+        }
+        applyCapabilities(data);
+      } catch (err) {
+        runtimeInfo.textContent = 'GPU-ominaisuuksien tarkistus epaonnistui. Voit silti kayttaa Auto- tai CPU-tilaa.';
+      }
+    }
+
+    function buildStartMessage() {
+      const runtimeMode = runtimeModeSelect.value;
+      if (runtimeMode === 'gpu') {
+        return 'Transkriptio kaynnissa. GPU-tila voi nopeuttaa kasittelya pitkillakin tiedostoilla.';
+      }
+      if (runtimeMode === 'cpu') {
+        return 'Transkriptio kaynnissa. CPU-kasittely voi kestaa hetken pitkan tiedoston kanssa.';
+      }
+      if (capabilities?.cuda_available) {
+        return 'Transkriptio kaynnissa. Auto yrittaa kayttaa GPU:ta, jos se on vapaana.';
+      }
+      return 'Transkriptio kaynnissa. Auto kayttaa CPU:ta, koska GPU ei ole saatavilla.';
     }
 
     function notifyUser(title, body) {
@@ -613,6 +675,7 @@
       formData.append('file', selected);
       formData.append('output_format', document.getElementById('format').value);
       formData.append('model_name', document.getElementById('model').value);
+      formData.append('runtime_mode', runtimeModeSelect.value);
 
       preview.value = '';
       lastResult = null;
@@ -620,7 +683,7 @@
       resetPolling();
       currentJobId = null;
       setDocumentState('Kasitellaan');
-      showStatus('Transkriptio kaynnissa. CPU-kasittely voi kestaa hetken pitkan tiedoston kanssa.', 'muted');
+      showStatus(buildStartMessage(), 'muted');
       setBusyState(true);
 
       try {
@@ -631,7 +694,7 @@
         }
 
         currentJobId = data.job_id;
-        showStatus('Transkriptio kaynnissa. Voit keskeyttaa sen Stop-painikkeella.', 'muted');
+        showStatus(data.message || 'Transkriptio kaynnissa. Voit keskeyttaa sen Stop-painikkeella.', 'muted');
         pollTimer = setTimeout(pollJobStatus, 700);
       } catch (err) {
         showStatus(`Virhe: ${err.message}`, 'error');
@@ -684,6 +747,8 @@
         setDocumentState('Virhe');
       }
     });
+
+    loadCapabilities();
   </script>
 </body>
 </html>

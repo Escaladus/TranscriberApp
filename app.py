@@ -7,6 +7,7 @@ import threading
 import uuid
 from pathlib import Path
 
+import ctranslate2
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -32,6 +33,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _models: dict[str, WhisperModel] = {}
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
+VALID_RUNTIME_MODES = {"auto", "cpu", "gpu"}
 
 
 def resolve_model_source(model_name: str) -> tuple[str, bool]:
@@ -41,14 +43,68 @@ def resolve_model_source(model_name: str) -> tuple[str, bool]:
     return model_name, False
 
 
-def get_model(model_name: str) -> WhisperModel:
+def get_cuda_device_count() -> int:
+    try:
+        return ctranslate2.get_cuda_device_count()
+    except Exception:
+        return 0
+
+
+def is_cuda_available() -> bool:
+    return get_cuda_device_count() > 0
+
+
+def resolve_runtime_config(runtime_mode: str) -> dict[str, str]:
+    requested_mode = runtime_mode.strip().lower()
+    if requested_mode not in VALID_RUNTIME_MODES:
+        raise HTTPException(status_code=400, detail="runtime_mode must be auto, cpu or gpu")
+
+    if requested_mode == "gpu":
+        if not is_cuda_available():
+            raise HTTPException(status_code=400, detail="GPU mode requested, but CUDA is not available.")
+        return {
+            "requested_runtime_mode": requested_mode,
+            "runtime_mode": "gpu",
+            "device": "cuda",
+            "compute_type": "float16",
+            "runtime_label": "GPU (CUDA float16)",
+        }
+
+    if requested_mode == "cpu":
+        return {
+            "requested_runtime_mode": requested_mode,
+            "runtime_mode": "cpu",
+            "device": "cpu",
+            "compute_type": "int8",
+            "runtime_label": "CPU (int8)",
+        }
+
+    if is_cuda_available():
+        return {
+            "requested_runtime_mode": requested_mode,
+            "runtime_mode": "gpu",
+            "device": "cuda",
+            "compute_type": "float16",
+            "runtime_label": "GPU (CUDA float16)",
+        }
+
+    return {
+        "requested_runtime_mode": requested_mode,
+        "runtime_mode": "cpu",
+        "device": "cpu",
+        "compute_type": "int8",
+        "runtime_label": "CPU (int8)",
+    }
+
+
+def get_model(model_name: str, device: str, compute_type: str) -> WhisperModel:
     model_source, local_files_only = resolve_model_source(model_name)
-    key = f"{model_source}:cpu:int8"
+    key = f"{model_source}:{device}:{compute_type}"
     if key not in _models:
         _models[key] = WhisperModel(
             model_source,
-            device="cpu",
-            compute_type="int8",
+            device=device,
+            compute_type=compute_type,
             local_files_only=local_files_only,
         )
     return _models[key]
@@ -149,7 +205,7 @@ def run_transcription_job(job_id: str) -> None:
         job = _jobs[job_id]
 
     try:
-        set_job_state(job_id, status="running", message="Transcription in progress on CPU.")
+        set_job_state(job_id, status="running", message=f"Transcription in progress on {job['runtime_label']}.")
 
         if cancel_requested(job):
             set_job_state(job_id, status="cancelled", message="Transcription was cancelled before start.")
@@ -157,7 +213,11 @@ def run_transcription_job(job_id: str) -> None:
             return
 
         try:
-            model = get_model(model_name=job["model_name"])
+            model = get_model(
+                model_name=job["model_name"],
+                device=job["device"],
+                compute_type=job["compute_type"],
+            )
         except Exception as e:
             raise RuntimeError(
                 "Model loading failed. Make sure the Whisper model exists in "
@@ -203,6 +263,11 @@ def run_transcription_job(job_id: str) -> None:
             "language": info.language,
             "duration": info.duration,
             "segment_count": len(segments),
+            "requested_runtime_mode": job["requested_runtime_mode"],
+            "runtime_mode": job["runtime_mode"],
+            "runtime_label": job["runtime_label"],
+            "device": job["device"],
+            "compute_type": job["compute_type"],
             "preview": transcript_text[:4000],
             "content": transcript_text,
             "saved_on_server": False,
@@ -219,17 +284,34 @@ def index() -> HTMLResponse:
     return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 
+@app.get("/capabilities")
+def capabilities():
+    cuda_device_count = get_cuda_device_count()
+    cuda_available = cuda_device_count > 0
+    runtime_modes = ["auto", "cpu"]
+    if cuda_available:
+        runtime_modes.append("gpu")
+    return {
+        "cuda_available": cuda_available,
+        "cuda_device_count": cuda_device_count,
+        "runtime_modes": runtime_modes,
+        "default_runtime_mode": "auto",
+    }
+
+
 @app.post("/transcribe/start")
 async def start_transcription(
     file: UploadFile = File(...),
     output_format: str = Form("txt"),
     model_name: str = Form("medium"),
+    runtime_mode: str = Form("auto"),
 ):
     ensure_ffmpeg()
 
     if output_format not in {"txt", "srt"}:
         raise HTTPException(status_code=400, detail="output_format must be txt or srt")
 
+    runtime_config = resolve_runtime_config(runtime_mode)
     suffix = Path(file.filename or "video.mp4").suffix or ".mp4"
     base_name = sanitize_name(Path(file.filename or "transcript").stem)
     job_id = uuid.uuid4().hex
@@ -244,7 +326,7 @@ async def start_transcription(
     job = {
         "id": job_id,
         "status": "queued",
-        "message": "Queued for transcription.",
+        "message": f"Queued for transcription on {runtime_config['runtime_label']}.",
         "output_format": output_format,
         "model_name": model_name,
         "suggested_filename": f"{base_name}.{output_format}",
@@ -253,6 +335,7 @@ async def start_transcription(
         "job_dir": job_dir,
         "cancel_event": threading.Event(),
         "result": None,
+        **runtime_config,
     }
 
     thread = threading.Thread(target=run_transcription_job, args=(job_id,), daemon=True)
@@ -262,7 +345,15 @@ async def start_transcription(
         _jobs[job_id] = job
 
     thread.start()
-    return JSONResponse({"job_id": job_id, "status": "queued", "message": "Transcription started."})
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "status": "queued",
+            "message": job["message"],
+            "runtime_mode": job["runtime_mode"],
+            "runtime_label": job["runtime_label"],
+        }
+    )
 
 
 @app.get("/transcribe/status/{job_id}")
