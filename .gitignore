@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+
+# Local runtime data
+.job_data/
+
+# IDE
+.idea/workspace.xml
+
+# Frontend/local artifacts
+*.log
