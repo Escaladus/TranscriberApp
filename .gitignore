@@ -9,8 +9,7 @@ __pycache__/
 .job_data/
 
 # IDE
-./idea
-.idea/workspace.xml
+.idea/
 
 # Frontend/local artifacts
 *.log
