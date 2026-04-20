@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -204,6 +205,8 @@ def run_transcription_job(job_id: str) -> None:
     with _jobs_lock:
         job = _jobs[job_id]
 
+    started_at = time.perf_counter()
+
     try:
         set_job_state(job_id, status="running", message=f"Transcription in progress on {job['runtime_label']}.")
 
@@ -262,6 +265,8 @@ def run_transcription_job(job_id: str) -> None:
             "format": job["output_format"],
             "language": info.language,
             "duration": info.duration,
+            "media_duration_seconds": info.duration,
+            "processing_time_seconds": time.perf_counter() - started_at,
             "segment_count": len(segments),
             "requested_runtime_mode": job["requested_runtime_mode"],
             "runtime_mode": job["runtime_mode"],

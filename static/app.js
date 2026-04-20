@@ -56,9 +56,46 @@ function setFile(file) {
   selectedFile.innerHTML = `<strong>Valittu tiedosto:</strong> ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
 }
 
+function formatDuration(seconds) {
+  const totalSeconds = Math.max(0, Math.round(seconds ?? 0));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+
+  if (hours > 0) {
+    const parts = [`${hours} h`, `${minutes} min`];
+    if (secs > 0) {
+      parts.push(`${secs} s`);
+    }
+    return parts.join(' ');
+  }
+
+  if (minutes > 0) {
+    return secs > 0 ? `${minutes} min ${secs} s` : `${minutes} min`;
+  }
+
+  return `${secs} s`;
+}
+
 function buildSummary(data) {
-  const runtimePart = data.runtime_label ? `Ajo: ${data.runtime_label}, ` : '';
-  return `${runtimePart}kieli: ${data.language}, kesto: ${Math.round(data.duration)} s, segmentteja: ${data.segment_count}.`;
+  const parts = [];
+  const mediaDurationSeconds = data.media_duration_seconds ?? data.duration;
+
+  if (data.runtime_label) {
+    parts.push(`Suoritustila: ${data.runtime_label}`);
+  }
+  if (data.language) {
+    parts.push(`kieli: ${data.language}`);
+  }
+  if (typeof mediaDurationSeconds === 'number') {
+    parts.push(`tiedoston pituus: ${formatDuration(mediaDurationSeconds)}`);
+  }
+  if (typeof data.processing_time_seconds === 'number') {
+    parts.push(`kasittelyaika: ${formatDuration(data.processing_time_seconds)}`);
+  }
+  parts.push(`segmentteja: ${data.segment_count}`);
+
+  return `${parts.join(', ')}.`;
 }
 
 function resetPolling() {
